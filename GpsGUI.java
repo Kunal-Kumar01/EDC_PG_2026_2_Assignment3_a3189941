@@ -3,6 +3,8 @@ import swidgets.*;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.Timer;
+import java.util.TimerTask;
 
 /**
  * GUI that displays GPS tracker data processed via Sodium FRP.
@@ -47,13 +49,35 @@ public class GpsGUI {
             Stream<String> simplified = streams[i].map(
                 (GpsEvent ev) -> ev.name + "," + ev.latitude + "," + ev.longitude);
 
-            Cell<String> display = simplified.hold("");
+            Cell<String> display = withAutoClear(simplified, 3);
 
             SLabel label = new SLabel(display);
             panel.add(label);
         }
 
         return panel;
+    }
+
+    /**
+     * Combines a stream of display values with a timed clear signal, so that
+     * the resulting cell resets to an empty string after a period of inactivity.
+     * @param source the stream of display strings to watch.
+     * @param seconds the number of seconds of inactivity before clearing.
+     * @return a cell holding the latest display string, or "" once expired.
+     */
+    private Cell<String> withAutoClear(Stream<String> source, int seconds) {
+        StreamSink<String> clearSink = new StreamSink<>();
+
+        source.listen((String value) -> {
+            Timer timer = new Timer();
+            timer.schedule(new TimerTask() {
+                public void run() {
+                    clearSink.send("");
+                }
+            }, seconds * 1000L);
+        });
+
+        return source.orElse(clearSink).hold("");
     }
 
     /**
