@@ -1,2 +1,5 @@
 *.class
 *.jar
+nz/
+swidgets/
+bin/

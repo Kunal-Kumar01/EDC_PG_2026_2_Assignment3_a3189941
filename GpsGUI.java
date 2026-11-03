@@ -60,10 +60,11 @@ public class GpsGUI {
     }
 
     /**
-     * Builds the panel showing a single display combining all tracker streams.
-     * Range filtering by latitude/longitude is not yet applied here.
+     * Builds the panel showing a single display combining all tracker streams,
+     * along with the range input controls.
+     * Range filtering by latitude/longitude is not yet applied to the display.
      * @param streams the GPS event streams, one per tracker.
-     * @return a panel containing the combined display label.
+     * @return a panel containing the combined display label and range controls.
      */
     private JPanel buildCombinedPanel(Stream<GpsEvent>[] streams) {
         JPanel panel = new JPanel(new BorderLayout());
@@ -80,6 +81,40 @@ public class GpsGUI {
         Cell<String> display = withAutoClear(simplified, 3);
         SLabel label = new SLabel(display);
         panel.add(label, BorderLayout.CENTER);
+
+        panel.add(buildRangeControls(), BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    /**
+     * Builds the control panel for setting the latitude/longitude range.
+     * Captures the entered values on button click and displays the currently
+     * stored range. The range is not yet used to filter any stream.
+     * @return a panel containing the range input fields, set button and a
+     *         label showing the currently stored range.
+     */
+    private JPanel buildRangeControls() {
+        JPanel panel = new JPanel(new FlowLayout());
+
+        STextField latField = new STextField("");
+        STextField lonField = new STextField("");
+        SButton setButton = new SButton("Set Range");
+
+        Cell<String[]> fields = latField.text.lift(lonField.text,
+            (lat, lon) -> new String[]{lat, lon});
+
+        Stream<String[]> onSet = setButton.sClicked.snapshot(fields, (unit, f) -> f);
+
+        Cell<String[]> range = onSet.hold(new String[]{"", ""});
+        Cell<String> rangeLabel = range.map(r -> "Lat: " + r[0] + ", Lon: " + r[1]);
+
+        panel.add(new JLabel("Lat:"));
+        panel.add(latField);
+        panel.add(new JLabel("Lon:"));
+        panel.add(lonField);
+        panel.add(setButton);
+        panel.add(new SLabel(rangeLabel));
 
         return panel;
     }
