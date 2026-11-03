@@ -29,6 +29,7 @@ public class GpsGUI {
         frame.setLayout(new BorderLayout());
 
         frame.add(buildTrackerPanel(streams), BorderLayout.NORTH);
+        frame.add(buildCombinedPanel(streams), BorderLayout.CENTER);
 
         frame.pack();
         frame.setVisible(true);
@@ -54,6 +55,31 @@ public class GpsGUI {
             SLabel label = new SLabel(display);
             panel.add(label);
         }
+
+        return panel;
+    }
+
+    /**
+     * Builds the panel showing a single display combining all tracker streams.
+     * Range filtering by latitude/longitude is not yet applied here.
+     * @param streams the GPS event streams, one per tracker.
+     * @return a panel containing the combined display label.
+     */
+    private JPanel buildCombinedPanel(Stream<GpsEvent>[] streams) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Combined Feed"));
+
+        Stream<GpsEvent> merged = streams[0];
+        for (int i = 1; i < streams.length; i++) {
+            merged = merged.orElse(streams[i]);
+        }
+
+        Stream<String> simplified = merged.map(
+            (GpsEvent ev) -> ev.name + "," + ev.latitude + "," + ev.longitude);
+
+        Cell<String> display = withAutoClear(simplified, 3);
+        SLabel label = new SLabel(display);
+        panel.add(label, BorderLayout.CENTER);
 
         return panel;
     }
