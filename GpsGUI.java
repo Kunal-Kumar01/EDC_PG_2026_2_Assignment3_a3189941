@@ -11,6 +11,7 @@ import swidgets.*;
 public class GpsGUI {
 
     private static final int NUM_TRACKERS = 10;
+    private static final double FEET_TO_METERS = 0.3048;
 
     private GpsService service;
     private Stream<GpsEvent>[] streams;
@@ -29,6 +30,7 @@ public class GpsGUI {
 
         frame.add(buildTrackerPanel(streams), BorderLayout.NORTH);
         frame.add(buildCombinedPanel(streams), BorderLayout.CENTER);
+        frame.add(buildDistancePanel(streams), BorderLayout.SOUTH);
 
         frame.pack();
         frame.setVisible(true);
@@ -111,6 +113,45 @@ public class GpsGUI {
         panel.add(controls, BorderLayout.SOUTH);
 
         return panel;
+    }
+
+    /**
+     * Builds the panel showing distance travelled per tracker.
+     * Altitude is converted from feet to meters as required, and each
+     * tracker's latest position is tracked via a cell, but the actual
+     * distance calculation and the 5-minute sliding window are not yet
+     * implemented — each label is currently a placeholder.
+     * @param streams the GPS event streams, one per tracker.
+     * @return a panel containing one distance label per tracker.
+     */
+    private JPanel buildDistancePanel(Stream<GpsEvent>[] streams) {
+        JPanel panel = new JPanel(new GridLayout(NUM_TRACKERS, 1));
+        panel.setBorder(BorderFactory.createTitledBorder("Distance (last 5 min)"));
+
+        for (int i = 0; i < streams.length; i++) {
+            final int trackerNum = i;
+
+            Stream<GpsEvent> metersStream = streams[i].map(GpsGUI::withAltitudeInMeters);
+            Cell<GpsEvent> lastPosition = metersStream.hold(null);
+
+            Cell<String> placeholder = lastPosition.map(ev ->
+                "Tracker" + trackerNum + ": 0m (calculation pending)");
+
+            SLabel label = new SLabel(placeholder);
+            panel.add(label);
+        }
+
+        return panel;
+    }
+
+    /**
+     * Returns a copy of the given event with its altitude converted from
+     * feet to meters.
+     * @param ev the original event, with altitude in feet.
+     * @return a new event with altitude in meters.
+     */
+    private static GpsEvent withAltitudeInMeters(GpsEvent ev) {
+        return new GpsEvent(ev.name, ev.latitude, ev.longitude, ev.altitude * FEET_TO_METERS);
     }
 
     /**
