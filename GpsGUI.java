@@ -1,10 +1,9 @@
-import nz.sodium.*;
-import swidgets.*;
-
-import javax.swing.*;
 import java.awt.*;
 import java.util.Timer;
 import java.util.TimerTask;
+import javax.swing.*;
+import nz.sodium.*;
+import swidgets.*;
 
 /**
  * GUI that displays GPS tracker data processed via Sodium FRP.
@@ -61,10 +60,10 @@ public class GpsGUI {
 
     /**
      * Builds the panel showing a single display combining all tracker streams,
-     * along with the range input controls.
-     * Range filtering by latitude/longitude is not yet applied to the display.
+     * filtered to only show events within the currently set latitude/longitude
+     * range, along with the range input controls.
      * @param streams the GPS event streams, one per tracker.
-     * @return a panel containing the combined display label and range controls.
+     * @return a panel containing the filtered combined display label and range controls.
      */
     private JPanel buildCombinedPanel(Stream<GpsEvent>[] streams) {
         JPanel panel = new JPanel(new BorderLayout());
@@ -75,28 +74,6 @@ public class GpsGUI {
             merged = merged.orElse(streams[i]);
         }
 
-        Stream<String> simplified = merged.map(
-            (GpsEvent ev) -> ev.name + "," + ev.latitude + "," + ev.longitude);
-
-        Cell<String> display = withAutoClear(simplified, 3);
-        SLabel label = new SLabel(display);
-        panel.add(label, BorderLayout.CENTER);
-
-        panel.add(buildRangeControls(), BorderLayout.SOUTH);
-
-        return panel;
-    }
-
-    /**
-     * Builds the control panel for setting the latitude/longitude range.
-     * Captures the entered values on button click and displays the currently
-     * stored range. The range is not yet used to filter any stream.
-     * @return a panel containing the range input fields, set button and a
-     *         label showing the currently stored range.
-     */
-    private JPanel buildRangeControls() {
-        JPanel panel = new JPanel(new FlowLayout());
-
         STextField latField = new STextField("");
         STextField lonField = new STextField("");
         SButton setButton = new SButton("Set Range");
@@ -106,17 +83,74 @@ public class GpsGUI {
 
         Stream<String[]> onSet = setButton.sClicked.snapshot(fields, (unit, f) -> f);
 
-        Cell<String[]> range = onSet.hold(new String[]{"", ""});
-        Cell<String> rangeLabel = range.map(r -> "Lat: " + r[0] + ", Lon: " + r[1]);
+        Cell<String[]> rangeText = onSet.hold(new String[]{"", ""});
+        Cell<String> rangeLabel = rangeText.map(r -> "Lat: " + r[0] + ", Lon: " + r[1]);
+        Cell<double[]> range = rangeText.map(GpsGUI::parseRange);
 
-        panel.add(new JLabel("Lat:"));
-        panel.add(latField);
-        panel.add(new JLabel("Lon:"));
-        panel.add(lonField);
-        panel.add(setButton);
-        panel.add(new SLabel(rangeLabel));
+        Stream<Tuple2<GpsEvent, double[]>> snapped = merged.snapshot(range,
+            (ev, r) -> new Tuple2<>(ev, r));
+
+        Stream<GpsEvent> inRange = snapped
+            .filter(t -> withinRange(t.a, t.b))
+            .map(t -> t.a);
+
+        Stream<String> simplified = inRange.map(
+            (GpsEvent ev) -> ev.name + "," + ev.latitude + "," + ev.longitude);
+
+        Cell<String> display = withAutoClear(simplified, 3);
+        SLabel label = new SLabel(display);
+        panel.add(label, BorderLayout.CENTER);
+
+        JPanel controls = new JPanel(new FlowLayout());
+        controls.add(new JLabel("Lat:"));
+        controls.add(latField);
+        controls.add(new JLabel("Lon:"));
+        controls.add(lonField);
+        controls.add(setButton);
+        controls.add(new SLabel(rangeLabel));
+        panel.add(controls, BorderLayout.SOUTH);
 
         return panel;
+    }
+
+    /**
+     * Parses a {latitude, longitude} string pair into numeric bounds.
+     * Unparsable or empty values default to the widest possible bound, so
+     * the filter accepts everything until a valid range is set.
+     * @param text the {latitude, longitude} strings from the range fields.
+     * @return a {latBound, lonBound} array of parsed doubles.
+     */
+    private static double[] parseRange(String[] text) {
+        return new double[]{
+            parseOrDefault(text[0], 90.0),
+            parseOrDefault(text[1], 180.0)
+        };
+    }
+
+    /**
+     * Parses a string to a double, falling back to a default on failure.
+     * @param s the string to parse.
+     * @param fallback the value to return if parsing fails.
+     * @return the parsed double, or the fallback.
+     */
+    private static double parseOrDefault(String s, double fallback) {
+        try {
+            return Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * Checks whether an event falls within the current range bounds.
+     * Provisional interpretation: the entered latitude/longitude act as
+     * upper bounds. Revisit once the exact range semantics are confirmed.
+     * @param ev the event to check.
+     * @param bounds the {latBound, lonBound} values.
+     * @return true if the event's latitude and longitude are within bounds.
+     */
+    private static boolean withinRange(GpsEvent ev, double[] bounds) {
+        return ev.latitude <= bounds[0] && ev.longitude <= bounds[1];
     }
 
     /**
