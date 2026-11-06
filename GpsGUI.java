@@ -1,9 +1,11 @@
-import java.awt.*;
-import java.util.Timer;
-import java.util.TimerTask;
-import javax.swing.*;
 import nz.sodium.*;
 import swidgets.*;
+
+import javax.swing.*;
+import java.awt.*;
+import java.util.LinkedList;
+import java.util.Timer;
+import java.util.TimerTask;
 
 /**
  * GUI that displays GPS tracker data processed via Sodium FRP.
@@ -13,6 +15,7 @@ public class GpsGUI {
     private static final int NUM_TRACKERS = 10;
     private static final double FEET_TO_METERS = 0.3048;
     private static final double METERS_PER_DEGREE = 111_320.0;
+    private static final long WINDOW_MILLIS = 5 * 60 * 1000L;
 
     private GpsService service;
     private Stream<GpsEvent>[] streams;
@@ -117,18 +120,16 @@ public class GpsGUI {
     }
 
     /**
-     * Builds the panel showing distance travelled per tracker.
-     * Altitude is converted from feet to meters, and the distance between
-     * each pair of consecutive events (including altitude change) is
-     * accumulated into a running total.
-     * Not yet implemented: restricting this to the last 5 minutes, and
-     * restricting input to events within the currently set range.
+     * Builds the panel showing distance travelled per tracker over the last
+     * 5 minutes. Altitude is converted from feet to meters, the distance
+     * between each pair of consecutive events is computed, and a sliding
+     * window keeps only segments from the last 5 minutes when summing.
      * @param streams the GPS event streams, one per tracker.
      * @return a panel containing one distance label per tracker.
      */
     private JPanel buildDistancePanel(Stream<GpsEvent>[] streams) {
         JPanel panel = new JPanel(new GridLayout(NUM_TRACKERS, 1));
-        panel.setBorder(BorderFactory.createTitledBorder("Distance (running total)"));
+        panel.setBorder(BorderFactory.createTitledBorder("Distance (last 5 min)"));
 
         for (int i = 0; i < streams.length; i++) {
             final int trackerNum = i;
@@ -139,16 +140,46 @@ public class GpsGUI {
             Stream<Double> segments = metersStream.snapshot(lastPosition,
                 GpsGUI::distanceBetween);
 
-            Cell<Double> totalDistance = segments.accum(0.0, (d, total) -> total + d);
+            Cell<LinkedList<double[]>> window = segments.accum(
+                new LinkedList<>(), GpsGUI::addToWindow);
 
-            Cell<String> distanceLabel = totalDistance.map(total ->
-                "Tracker" + trackerNum + ": " + (long) Math.ceil(total) + "m");
+            Cell<String> distanceLabel = window.map(w ->
+                "Tracker" + trackerNum + ": " + (long) Math.ceil(sumWindow(w)) + "m");
 
             SLabel label = new SLabel(distanceLabel);
             panel.add(label);
         }
 
         return panel;
+    }
+
+    /**
+     * Adds a new distance segment to the sliding window, timestamped now,
+     * then drops any segments older than the 5-minute window.
+     * @param distance the new segment's distance in meters.
+     * @param window the existing window of {timestamp, distance} entries.
+     * @return the updated window, with stale entries removed.
+     */
+    private static LinkedList<double[]> addToWindow(double distance, LinkedList<double[]> window) {
+        long now = System.currentTimeMillis();
+        window.addLast(new double[]{now, distance});
+        while (!window.isEmpty() && now - window.getFirst()[0] > WINDOW_MILLIS) {
+            window.removeFirst();
+        }
+        return window;
+    }
+
+    /**
+     * Sums the distance values currently held in a window.
+     * @param window the window of {timestamp, distance} entries.
+     * @return the total distance in meters.
+     */
+    private static double sumWindow(LinkedList<double[]> window) {
+        double total = 0.0;
+        for (double[] entry : window) {
+            total += entry[1];
+        }
+        return total;
     }
 
     /**
