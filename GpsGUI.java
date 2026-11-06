@@ -12,6 +12,7 @@ public class GpsGUI {
 
     private static final int NUM_TRACKERS = 10;
     private static final double FEET_TO_METERS = 0.3048;
+    private static final double METERS_PER_DEGREE = 111_320.0;
 
     private GpsService service;
     private Stream<GpsEvent>[] streams;
@@ -117,16 +118,17 @@ public class GpsGUI {
 
     /**
      * Builds the panel showing distance travelled per tracker.
-     * Altitude is converted from feet to meters as required, and each
-     * tracker's latest position is tracked via a cell, but the actual
-     * distance calculation and the 5-minute sliding window are not yet
-     * implemented — each label is currently a placeholder.
+     * Altitude is converted from feet to meters, and the distance between
+     * each pair of consecutive events (including altitude change) is
+     * accumulated into a running total.
+     * Not yet implemented: restricting this to the last 5 minutes, and
+     * restricting input to events within the currently set range.
      * @param streams the GPS event streams, one per tracker.
      * @return a panel containing one distance label per tracker.
      */
     private JPanel buildDistancePanel(Stream<GpsEvent>[] streams) {
         JPanel panel = new JPanel(new GridLayout(NUM_TRACKERS, 1));
-        panel.setBorder(BorderFactory.createTitledBorder("Distance (last 5 min)"));
+        panel.setBorder(BorderFactory.createTitledBorder("Distance (running total)"));
 
         for (int i = 0; i < streams.length; i++) {
             final int trackerNum = i;
@@ -134,10 +136,15 @@ public class GpsGUI {
             Stream<GpsEvent> metersStream = streams[i].map(GpsGUI::withAltitudeInMeters);
             Cell<GpsEvent> lastPosition = metersStream.hold(null);
 
-            Cell<String> placeholder = lastPosition.map(ev ->
-                "Tracker" + trackerNum + ": 0m (calculation pending)");
+            Stream<Double> segments = metersStream.snapshot(lastPosition,
+                GpsGUI::distanceBetween);
 
-            SLabel label = new SLabel(placeholder);
+            Cell<Double> totalDistance = segments.accum(0.0, (d, total) -> total + d);
+
+            Cell<String> distanceLabel = totalDistance.map(total ->
+                "Tracker" + trackerNum + ": " + (long) Math.ceil(total) + "m");
+
+            SLabel label = new SLabel(distanceLabel);
             panel.add(label);
         }
 
@@ -152,6 +159,25 @@ public class GpsGUI {
      */
     private static GpsEvent withAltitudeInMeters(GpsEvent ev) {
         return new GpsEvent(ev.name, ev.latitude, ev.longitude, ev.altitude * FEET_TO_METERS);
+    }
+
+    /**
+     * Calculates the straight-line distance in meters between two events,
+     * treating latitude/longitude degrees as flat (no Earth curvature) but
+     * including the altitude difference.
+     * @param current the current event.
+     * @param previous the previous event, or null if there is none yet.
+     * @return the distance in meters, or 0 if there is no previous event.
+     */
+    private static double distanceBetween(GpsEvent current, GpsEvent previous) {
+        if (previous == null) {
+            return 0.0;
+        }
+        double dLat = (current.latitude - previous.latitude) * METERS_PER_DEGREE;
+        double dLon = (current.longitude - previous.longitude) * METERS_PER_DEGREE
+            * Math.cos(Math.toRadians(current.latitude));
+        double dAlt = current.altitude - previous.altitude;
+        return Math.sqrt(dLat * dLat + dLon * dLon + dAlt * dAlt);
     }
 
     /**
