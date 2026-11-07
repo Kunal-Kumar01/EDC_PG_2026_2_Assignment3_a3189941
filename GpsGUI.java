@@ -32,9 +32,11 @@ public class GpsGUI {
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLayout(new BorderLayout());
 
+        Tuple2<JPanel, Cell<double[]>> rangeControls = buildRangeControls();
+
         frame.add(buildTrackerPanel(streams), BorderLayout.NORTH);
-        frame.add(buildCombinedPanel(streams), BorderLayout.CENTER);
-        frame.add(buildDistancePanel(streams), BorderLayout.SOUTH);
+        frame.add(buildCombinedPanel(streams, rangeControls), BorderLayout.CENTER);
+        frame.add(buildDistancePanel(streams, rangeControls.b), BorderLayout.SOUTH);
 
         frame.pack();
         frame.setVisible(true);
@@ -65,20 +67,12 @@ public class GpsGUI {
     }
 
     /**
-     * Builds the panel showing a single display combining all tracker streams,
-     * filtered to only show events within the currently set latitude/longitude
-     * range, along with the range input controls.
-     * @param streams the GPS event streams, one per tracker.
-     * @return a panel containing the filtered combined display label and range controls.
+     * Builds the latitude/longitude range control panel.
+     * @return a pair of the controls panel and the cell holding the
+     *         currently set {latBound, lonBound} range.
      */
-    private JPanel buildCombinedPanel(Stream<GpsEvent>[] streams) {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(BorderFactory.createTitledBorder("Combined Feed"));
-
-        Stream<GpsEvent> merged = streams[0];
-        for (int i = 1; i < streams.length; i++) {
-            merged = merged.orElse(streams[i]);
-        }
+    private Tuple2<JPanel, Cell<double[]>> buildRangeControls() {
+        JPanel panel = new JPanel(new FlowLayout());
 
         STextField latField = new STextField("");
         STextField lonField = new STextField("");
@@ -93,6 +87,36 @@ public class GpsGUI {
         Cell<String> rangeLabel = rangeText.map(r -> "Lat: " + r[0] + ", Lon: " + r[1]);
         Cell<double[]> range = rangeText.map(GpsGUI::parseRange);
 
+        panel.add(new JLabel("Lat:"));
+        panel.add(latField);
+        panel.add(new JLabel("Lon:"));
+        panel.add(lonField);
+        panel.add(setButton);
+        panel.add(new SLabel(rangeLabel));
+
+        return new Tuple2<>(panel, range);
+    }
+
+    /**
+     * Builds the panel showing a single display combining all tracker streams,
+     * filtered to only show events within the currently set latitude/longitude
+     * range, along with the range input controls.
+     * @param streams the GPS event streams, one per tracker.
+     * @param rangeControls the shared range controls panel and range cell.
+     * @return a panel containing the filtered combined display label and range controls.
+     */
+    private JPanel buildCombinedPanel(Stream<GpsEvent>[] streams,
+            Tuple2<JPanel, Cell<double[]>> rangeControls) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Combined Feed"));
+
+        Stream<GpsEvent> merged = streams[0];
+        for (int i = 1; i < streams.length; i++) {
+            merged = merged.orElse(streams[i]);
+        }
+
+        Cell<double[]> range = rangeControls.b;
+
         Stream<Tuple2<GpsEvent, double[]>> snapped = merged.snapshot(range,
             (ev, r) -> new Tuple2<>(ev, r));
 
@@ -106,35 +130,34 @@ public class GpsGUI {
         Cell<String> display = withAutoClear(simplified, 3);
         SLabel label = new SLabel(display);
         panel.add(label, BorderLayout.CENTER);
-
-        JPanel controls = new JPanel(new FlowLayout());
-        controls.add(new JLabel("Lat:"));
-        controls.add(latField);
-        controls.add(new JLabel("Lon:"));
-        controls.add(lonField);
-        controls.add(setButton);
-        controls.add(new SLabel(rangeLabel));
-        panel.add(controls, BorderLayout.SOUTH);
+        panel.add(rangeControls.a, BorderLayout.SOUTH);
 
         return panel;
     }
 
     /**
      * Builds the panel showing distance travelled per tracker over the last
-     * 5 minutes. Altitude is converted from feet to meters, the distance
-     * between each pair of consecutive events is computed, and a sliding
-     * window keeps only segments from the last 5 minutes when summing.
+     * 5 minutes, using only events within the currently set range.
+     * Altitude is converted from feet to meters, the distance between each
+     * pair of consecutive in-range events is computed, and a sliding window
+     * keeps only segments from the last 5 minutes when summing.
      * @param streams the GPS event streams, one per tracker.
+     * @param range the cell holding the currently set {latBound, lonBound} range.
      * @return a panel containing one distance label per tracker.
      */
-    private JPanel buildDistancePanel(Stream<GpsEvent>[] streams) {
+    private JPanel buildDistancePanel(Stream<GpsEvent>[] streams, Cell<double[]> range) {
         JPanel panel = new JPanel(new GridLayout(NUM_TRACKERS, 1));
         panel.setBorder(BorderFactory.createTitledBorder("Distance (last 5 min)"));
 
         for (int i = 0; i < streams.length; i++) {
             final int trackerNum = i;
 
-            Stream<GpsEvent> metersStream = streams[i].map(GpsGUI::withAltitudeInMeters);
+            Stream<GpsEvent> inRangeStream = streams[i]
+                .snapshot(range, (ev, r) -> new Tuple2<>(ev, r))
+                .filter(t -> withinRange(t.a, t.b))
+                .map(t -> t.a);
+
+            Stream<GpsEvent> metersStream = inRangeStream.map(GpsGUI::withAltitudeInMeters);
             Cell<GpsEvent> lastPosition = metersStream.hold(null);
 
             Stream<Double> segments = metersStream.snapshot(lastPosition,
