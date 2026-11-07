@@ -277,15 +277,22 @@ public class GpsGUI {
     /**
      * Combines a stream of display values with a timed clear signal, so that
      * the resulting cell resets to an empty string after a period of inactivity.
+     * Cancels any previously scheduled clear so a stale timer cannot fire
+     * after a newer value has already reset the clock.
      * @param source the stream of display strings to watch.
      * @param seconds the number of seconds of inactivity before clearing.
      * @return a cell holding the latest display string, or "" once expired.
      */
     private Cell<String> withAutoClear(Stream<String> source, int seconds) {
         StreamSink<String> clearSink = new StreamSink<>();
+        final Timer[] activeTimer = new Timer[1];
 
         source.listen((String value) -> {
+            if (activeTimer[0] != null) {
+                activeTimer[0].cancel();
+            }
             Timer timer = new Timer();
+            activeTimer[0] = timer;
             timer.schedule(new TimerTask() {
                 public void run() {
                     clearSink.send("");
